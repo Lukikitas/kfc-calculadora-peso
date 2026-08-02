@@ -1,0 +1,153 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { UploadIcon } from '../components/ui/Icons';
+
+interface WeightItem {
+  id: string;
+  name: string;
+  gramsPerUnit: number;
+}
+
+const STORAGE_KEY = 'kfc_weight_calculator_items';
+
+const defaultItems: WeightItem[] = [
+  { id: 'barbacoa-individual', name: 'Barbacoa individual', gramsPerUnit: 25 },
+];
+
+const getItems = (): WeightItem[] => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (!saved) return defaultItems;
+    const parsed = JSON.parse(saved) as WeightItem[];
+    return Array.isArray(parsed) ? parsed.filter(item => item.name && item.gramsPerUnit > 0) : defaultItems;
+  } catch {
+    return defaultItems;
+  }
+};
+
+const parseNumber = (value: string): number => Number(value.trim().replace(',', '.'));
+
+const parseCsvLine = (line: string, separator: string): string[] => {
+  const values: string[] = [];
+  let current = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const character = line[i];
+    if (character === '"') {
+      if (quoted && line[i + 1] === '"') { current += '"'; i++; } else quoted = !quoted;
+    } else if (character === separator && !quoted) { values.push(current.trim()); current = ''; }
+    else current += character;
+  }
+  values.push(current.trim());
+  return values;
+};
+
+const WeightCalculator: React.FC = () => {
+  const navigate = useNavigate();
+  const [items, setItems] = useState<WeightItem[]>(getItems);
+  const [selectedId, setSelectedId] = useState('barbacoa-individual');
+  const [totalWeight, setTotalWeight] = useState('');
+  const [newName, setNewName] = useState('');
+  const [newWeight, setNewWeight] = useState('');
+  const [message, setMessage] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(items)); }, [items]);
+  useEffect(() => {
+    if (!items.some(item => item.id === selectedId)) setSelectedId(items[0]?.id || '');
+  }, [items, selectedId]);
+
+  const selectedItem = items.find(item => item.id === selectedId);
+  const grams = parseNumber(totalWeight || '0');
+  const units = selectedItem && grams > 0 ? grams / selectedItem.gramsPerUnit : 0;
+  const completeUnits = Math.floor(units);
+  const remainder = selectedItem && grams > 0 ? grams - (completeUnits * selectedItem.gramsPerUnit) : 0;
+
+  const addItem = () => {
+    const gramsPerUnit = parseNumber(newWeight);
+    const name = newName.trim();
+    if (!name || !Number.isFinite(gramsPerUnit) || gramsPerUnit <= 0) {
+      setMessage('Completá nombre y gramos por unidad con valores válidos.');
+      return;
+    }
+    const item = { id: `${Date.now()}-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`, name, gramsPerUnit };
+    setItems(previous => [...previous, item].sort((a, b) => a.name.localeCompare(b.name, 'es')));
+    setSelectedId(item.id);
+    setNewName('');
+    setNewWeight('');
+    setMessage('Ítem agregado.');
+  };
+
+  const deleteItem = (id: string) => {
+    setItems(previous => previous.filter(item => item.id !== id));
+    setMessage('Ítem eliminado.');
+  };
+
+  const importCsv = async (file: File) => {
+    const text = await file.text();
+    const rows = text.split(/\r?\n/).filter(row => row.trim());
+    if (!rows.length) { setMessage('El archivo está vacío.'); return; }
+    const separator = (rows[0].match(/;/g)?.length || 0) >= (rows[0].match(/,/g)?.length || 0) ? ';' : ',';
+    const firstRow = parseCsvLine(rows[0], separator).map(value => value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim());
+    const nameColumn = firstRow.findIndex(value => ['item', 'producto', 'nombre', 'articulo', 'articulo'].includes(value));
+    const weightColumn = firstRow.findIndex(value => ['gramos por unidad', 'peso por unidad', 'peso_unitario_g', 'gramos', 'peso', 'gramos/unidad'].includes(value));
+    const hasHeader = nameColumn >= 0 && weightColumn >= 0;
+    const imported: WeightItem[] = [];
+    rows.slice(hasHeader ? 1 : 0).forEach((row, index) => {
+      const columns = parseCsvLine(row, separator);
+      const name = columns[hasHeader ? nameColumn : 0]?.trim();
+      const gramsPerUnit = parseNumber(columns[hasHeader ? weightColumn : 1] || '');
+      if (name && Number.isFinite(gramsPerUnit) && gramsPerUnit > 0) {
+        imported.push({ id: `import-${Date.now()}-${index}`, name, gramsPerUnit });
+      }
+    });
+    if (!imported.length) {
+      setMessage('No encontré ítems válidos. Usá las columnas “Producto” y “Gramos por unidad”.');
+      return;
+    }
+    setItems(previous => {
+      const byName = new Map(previous.map(item => [item.name.trim().toLowerCase(), item]));
+      imported.forEach(item => byName.set(item.name.trim().toLowerCase(), item));
+      return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    });
+    setSelectedId(imported[0].id);
+    setMessage(`${imported.length} ítem(s) importado(s). Si ya existían, se actualizaron.`);
+  };
+
+  const resultText = useMemo(() => {
+    if (!selectedItem || !grams || grams <= 0) return 'Ingresá el peso total para calcular.';
+    return `${units.toFixed(2).replace('.', ',')} unidades equivalentes`;
+  }, [grams, selectedItem, units]);
+
+  const inputClasses = 'mt-1 block w-full rounded-md border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white shadow-sm focus:border-violet-500 focus:ring-violet-500 p-2';
+
+  return (
+    <div className="max-w-4xl mx-auto">
+      <button onClick={() => navigate('/')} className="mb-6 bg-slate-500 hover:bg-slate-600 text-white font-bold py-2 px-4 rounded-lg shadow">&larr; Volver al Menú Principal</button>
+      <h1 className="text-2xl sm:text-3xl font-bold text-center text-violet-700 dark:text-violet-400">Calculadora por Peso</h1>
+      <p className="text-center text-slate-600 dark:text-slate-300 mt-2 mb-6">Ingresá el peso total y obtené la cantidad equivalente de unidades.</p>
+
+      <section className="p-4 sm:p-6 bg-white dark:bg-slate-800 rounded-lg shadow-md">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div><label className="block text-sm font-medium">Ítem</label><select value={selectedId} onChange={event => setSelectedId(event.target.value)} className={inputClasses}>{items.map(item => <option key={item.id} value={item.id}>{item.name} — {item.gramsPerUnit} g/u</option>)}</select></div>
+          <div><label className="block text-sm font-medium">Peso total (gramos)</label><input type="number" inputMode="decimal" min="0" step="0.01" value={totalWeight} onChange={event => setTotalWeight(event.target.value)} className={inputClasses} placeholder="Ej.: 250" autoFocus /></div>
+        </div>
+        <div className="mt-6 text-center rounded-lg bg-violet-50 dark:bg-violet-950/40 p-5">
+          <p className="text-sm text-violet-700 dark:text-violet-300">{selectedItem ? `Cada ${selectedItem.name} pesa ${selectedItem.gramsPerUnit} g.` : 'Cargá un ítem para empezar.'}</p>
+          <p className="text-3xl font-bold text-violet-800 dark:text-violet-200 mt-2">{resultText}</p>
+          {selectedItem && grams > 0 && <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Unidades completas: {completeUnits} · Sobrante: {remainder.toFixed(2).replace('.', ',')} g</p>}
+        </div>
+      </section>
+
+      <section className="mt-6 p-4 sm:p-6 bg-white dark:bg-slate-800 rounded-lg shadow-md">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4"><h2 className="text-xl font-semibold">Administrar ítems</h2><input ref={inputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={event => { const file = event.target.files?.[0]; if (file) importCsv(file); event.currentTarget.value = ''; }} /><button onClick={() => inputRef.current?.click()} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg shadow flex items-center justify-center"><UploadIcon />Importar lista CSV</button></div>
+        <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">Desde Excel: guardá la hoja como <strong>CSV UTF-8</strong> con las columnas <strong>Producto</strong> y <strong>Gramos por unidad</strong>. La importación agrega los nuevos ítems y actualiza los que tengan el mismo nombre.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3"><input value={newName} onChange={event => setNewName(event.target.value)} className={inputClasses} placeholder="Nombre del ítem" /><input type="number" min="0" step="0.01" value={newWeight} onChange={event => setNewWeight(event.target.value)} className={inputClasses} placeholder="Gramos por unidad" /><button onClick={addItem} className="mt-1 bg-violet-600 hover:bg-violet-700 text-white font-bold py-2 px-4 rounded-lg shadow">Agregar ítem</button></div>
+        {message && <p className="mt-3 text-sm text-violet-700 dark:text-violet-300">{message}</p>}
+        <div className="mt-5 overflow-x-auto"><table className="min-w-full text-sm"><thead className="bg-slate-100 dark:bg-slate-700"><tr><th className="p-2 text-left">Ítem</th><th className="p-2 text-left">Gramos por unidad</th><th className="p-2"></th></tr></thead><tbody>{items.map(item => <tr key={item.id} className="border-b border-slate-200 dark:border-slate-700"><td className="p-2">{item.name}</td><td className="p-2">{item.gramsPerUnit} g</td><td className="p-2 text-right"><button onClick={() => deleteItem(item.id)} className="text-red-600 hover:text-red-800 dark:text-red-400 text-sm font-medium">Eliminar</button></td></tr>)}</tbody></table></div>
+      </section>
+    </div>
+  );
+};
+
+export default WeightCalculator;

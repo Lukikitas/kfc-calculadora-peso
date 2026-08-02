@@ -1,0 +1,6 @@
+{
+  "name": "Copy of KFC La Plata - Order Manager",
+  "description": "A React and Tailwind CSS application to manage KFC La Plata orders for various suppliers, track history, and set special reminders. This app replicates and enhances the functionality of an existing HTML/JS order management tool.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
