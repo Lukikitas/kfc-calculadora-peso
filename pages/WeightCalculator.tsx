@@ -8,6 +8,7 @@ interface WeightItem {
 }
 
 const STORAGE_KEY = 'kfc_weight_calculator_items';
+const HIDDEN_DEFAULT_ITEMS_KEY = 'kfc_weight_calculator_hidden_default_items';
 const defaultItemNames = [
   'Barbacoa individual',
   'BOLSA DE LLEVAR GRANDE KFC2',
@@ -84,14 +85,25 @@ const defaultItems: WeightItem[] = defaultItemNames.map((name, index) => ({
 
 const normalizeName = (name: string) => name.trim().toLowerCase();
 
+const getHiddenDefaultNames = (): string[] => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(HIDDEN_DEFAULT_ITEMS_KEY) || '[]');
+    return Array.isArray(saved) ? saved.filter((name): name is string => typeof name === 'string') : [];
+  } catch {
+    return [];
+  }
+};
+
 const getItems = (): WeightItem[] => {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (!saved) return defaultItems;
+    const hiddenNames = new Set(getHiddenDefaultNames());
+    const availableDefaults = defaultItems.filter(item => !hiddenNames.has(normalizeName(item.name)));
+    if (!saved) return availableDefaults;
     const parsed = JSON.parse(saved) as WeightItem[];
-    if (!Array.isArray(parsed)) return defaultItems;
+    if (!Array.isArray(parsed)) return availableDefaults;
     const validSaved = parsed.filter(item => item.name && Number.isFinite(item.gramsPerUnit) && item.gramsPerUnit >= 0);
-    const byName = new Map(defaultItems.map(item => [normalizeName(item.name), item]));
+    const byName = new Map(availableDefaults.map(item => [normalizeName(item.name), item]));
     validSaved.forEach(item => byName.set(normalizeName(item.name), item));
     return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name, 'es'));
   } catch {
@@ -121,6 +133,8 @@ const parseCsvLine = (line: string, separator: string): string[] => {
 const WeightCalculator: React.FC = () => {
   const [items, setItems] = useState<WeightItem[]>(getItems);
   const [totalWeights, setTotalWeights] = useState<Record<string, string>>({});
+  const [hiddenDefaultNames, setHiddenDefaultNames] = useState<string[]>(getHiddenDefaultNames);
+  const [searchQuery, setSearchQuery] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [unitWeightDraft, setUnitWeightDraft] = useState('');
   const [newName, setNewName] = useState('');
@@ -129,6 +143,7 @@ const WeightCalculator: React.FC = () => {
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(items)); }, [items]);
+  useEffect(() => { localStorage.setItem(HIDDEN_DEFAULT_ITEMS_KEY, JSON.stringify(hiddenDefaultNames)); }, [hiddenDefaultNames]);
 
   const startEditing = (item: WeightItem) => {
     setEditingId(item.id);
@@ -160,12 +175,17 @@ const WeightCalculator: React.FC = () => {
       gramsPerUnit,
     };
     setItems(previous => [...previous, item].sort((a, b) => a.name.localeCompare(b.name, 'es')));
+    setHiddenDefaultNames(previous => previous.filter(hiddenName => hiddenName !== normalizeName(name)));
     setNewName('');
     setNewWeight('');
     setMessage('Ítem agregado.');
   };
 
   const deleteItem = (id: string) => {
+    const item = items.find(current => current.id === id);
+    if (item && defaultItems.some(defaultItem => normalizeName(defaultItem.name) === normalizeName(item.name))) {
+      setHiddenDefaultNames(previous => [...new Set([...previous, normalizeName(item.name)])]);
+    }
     setItems(previous => previous.filter(item => item.id !== id));
     setTotalWeights(previous => {
       const { [id]: _, ...rest } = previous;
@@ -202,10 +222,12 @@ const WeightCalculator: React.FC = () => {
       imported.forEach(item => byName.set(item.name.trim().toLowerCase(), item));
       return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name, 'es'));
     });
+    setHiddenDefaultNames(previous => previous.filter(hiddenName => !imported.some(item => normalizeName(item.name) === hiddenName)));
     setMessage(`${imported.length} ítem(s) importado(s). Los existentes se actualizaron.`);
   };
 
   const inputClasses = 'mt-1 block w-full rounded-md border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white shadow-sm focus:border-violet-500 focus:ring-violet-500 p-3';
+  const visibleItems = items.filter(item => item.name.toLowerCase().includes(searchQuery.trim().toLowerCase()));
 
   return (
     <main className="max-w-4xl mx-auto pb-8 sm:pb-12">
@@ -215,7 +237,11 @@ const WeightCalculator: React.FC = () => {
       </header>
 
       <section className="space-y-3">
-        {items.map(item => {
+        <label className="block">
+          <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Buscar ítem</span>
+          <input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} className={inputClasses} placeholder="Escribí el nombre del producto" />
+        </label>
+        {visibleItems.map(item => {
           const grams = parseNumber(totalWeights[item.id] || '0');
           const hasWeight = Number.isFinite(grams) && grams > 0;
           const canCalculate = hasWeight && item.gramsPerUnit > 0;
@@ -231,7 +257,7 @@ const WeightCalculator: React.FC = () => {
                   <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">Peso unitario: <strong>{item.gramsPerUnit > 0 ? `${item.gramsPerUnit} g` : 'sin definir'}</strong></p>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => startEditing(item)} className="flex-1 sm:flex-none bg-violet-600 hover:bg-violet-700 text-white font-semibold py-2 px-3 rounded-lg touch-manipulation">
+                  <button onClick={() => startEditing(item)} className="flex-1 sm:flex-none bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold py-1.5 px-2 rounded-md touch-manipulation">
                     {item.gramsPerUnit > 0 ? 'Modificar peso unitario' : 'Definir peso unitario'}
                   </button>
                   <button onClick={() => deleteItem(item.id)} className="text-red-600 hover:text-red-800 dark:text-red-400 font-medium py-2 px-2">Eliminar</button>
@@ -256,14 +282,15 @@ const WeightCalculator: React.FC = () => {
                 </div>
                 <div className="rounded-lg bg-violet-50 dark:bg-violet-950/40 p-3 sm:p-4 min-h-[92px] flex flex-col justify-center">
                   {canCalculate ? <>
-                    <p className="text-2xl font-bold text-violet-800 dark:text-violet-200">{units.toFixed(2).replace('.', ',')} unidades</p>
-                    <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">Completas: {completeUnits} · Sobrante: {remainder.toFixed(2).replace('.', ',')} g</p>
+                    <p className="text-2xl font-bold text-violet-800 dark:text-violet-200">{completeUnits} unidades</p>
+                    <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">Sobrante: {remainder.toFixed(2).replace('.', ',')} g</p>
                   </> : <p className="text-sm text-slate-600 dark:text-slate-300">{hasWeight ? 'Definí el peso unitario para calcular.' : 'Ingresá el peso total para calcular.'}</p>}
                 </div>
               </div>
             </article>
           );
         })}
+        {visibleItems.length === 0 && <p className="text-center py-6 text-slate-600 dark:text-slate-300">No se encontraron ítems con esa búsqueda.</p>}
       </section>
 
       <section className="mt-6 p-4 sm:p-6 bg-white dark:bg-slate-800 rounded-xl shadow-md">
