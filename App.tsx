@@ -1,13 +1,9 @@
 
 import React from 'react';
-import { HashRouter, Routes, Route } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { AppStateProvider } from './contexts/AppStateContext';
 import { ThemeToggleButton } from './components/ui/ThemeToggleButton';
-import MainMenu from './pages/MainMenu';
-import OrderCalculator from './pages/OrderCalculator';
-import AllOrdersView from './pages/AllOrdersView';
-import SpecialRemindersView from './pages/SpecialRemindersView';
 import WeightCalculator from './pages/WeightCalculator';
 
 const App: React.FC = () => {
@@ -20,11 +16,9 @@ const App: React.FC = () => {
               <ThemeToggleButton />
             </div>
             <Routes>
-              <Route path="/" element={<MainMenu />} />
-              <Route path="/calculator/:supplierKey" element={<OrderCalculator />} />
-              <Route path="/all-orders" element={<AllOrdersView />} />
-              <Route path="/special-reminders" element={<SpecialRemindersView />} />
-              <Route path="/weight-calculator" element={<WeightCalculator />} />
+              <Route path="/" element={<WeightCalculator />} />
+              <Route path="/weight-calculator" element={<Navigate to="/" replace />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </div>
         </HashRouter>

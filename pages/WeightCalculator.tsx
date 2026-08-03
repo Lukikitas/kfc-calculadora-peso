@@ -1,5 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useEffect, useRef, useState } from 'react';
 import { UploadIcon } from '../components/ui/Icons';
 
 interface WeightItem {
@@ -9,7 +8,6 @@ interface WeightItem {
 }
 
 const STORAGE_KEY = 'kfc_weight_calculator_items';
-
 const defaultItems: WeightItem[] = [
   { id: 'barbacoa-individual', name: 'Barbacoa individual', gramsPerUnit: 25 },
 ];
@@ -19,7 +17,9 @@ const getItems = (): WeightItem[] => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (!saved) return defaultItems;
     const parsed = JSON.parse(saved) as WeightItem[];
-    return Array.isArray(parsed) ? parsed.filter(item => item.name && item.gramsPerUnit > 0) : defaultItems;
+    return Array.isArray(parsed)
+      ? parsed.filter(item => item.name && Number.isFinite(item.gramsPerUnit) && item.gramsPerUnit > 0)
+      : defaultItems;
   } catch {
     return defaultItems;
   }
@@ -35,44 +35,57 @@ const parseCsvLine = (line: string, separator: string): string[] => {
     const character = line[i];
     if (character === '"') {
       if (quoted && line[i + 1] === '"') { current += '"'; i++; } else quoted = !quoted;
-    } else if (character === separator && !quoted) { values.push(current.trim()); current = ''; }
-    else current += character;
+    } else if (character === separator && !quoted) {
+      values.push(current.trim());
+      current = '';
+    } else current += character;
   }
   values.push(current.trim());
   return values;
 };
 
 const WeightCalculator: React.FC = () => {
-  const navigate = useNavigate();
   const [items, setItems] = useState<WeightItem[]>(getItems);
-  const [selectedId, setSelectedId] = useState('barbacoa-individual');
-  const [totalWeight, setTotalWeight] = useState('');
+  const [totalWeights, setTotalWeights] = useState<Record<string, string>>({});
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [unitWeightDraft, setUnitWeightDraft] = useState('');
   const [newName, setNewName] = useState('');
   const [newWeight, setNewWeight] = useState('');
   const [message, setMessage] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(items)); }, [items]);
-  useEffect(() => {
-    if (!items.some(item => item.id === selectedId)) setSelectedId(items[0]?.id || '');
-  }, [items, selectedId]);
 
-  const selectedItem = items.find(item => item.id === selectedId);
-  const grams = parseNumber(totalWeight || '0');
-  const units = selectedItem && grams > 0 ? grams / selectedItem.gramsPerUnit : 0;
-  const completeUnits = Math.floor(units);
-  const remainder = selectedItem && grams > 0 ? grams - (completeUnits * selectedItem.gramsPerUnit) : 0;
+  const startEditing = (item: WeightItem) => {
+    setEditingId(item.id);
+    setUnitWeightDraft(String(item.gramsPerUnit));
+    setMessage('');
+  };
 
-  const addItem = () => {
-    const gramsPerUnit = parseNumber(newWeight);
-    const name = newName.trim();
-    if (!name || !Number.isFinite(gramsPerUnit) || gramsPerUnit <= 0) {
-      setMessage('Completá nombre y gramos por unidad con valores válidos.');
+  const saveUnitWeight = (id: string) => {
+    const gramsPerUnit = parseNumber(unitWeightDraft);
+    if (!Number.isFinite(gramsPerUnit) || gramsPerUnit <= 0) {
+      setMessage('Ingresá un peso unitario válido mayor a cero.');
       return;
     }
-    const item = { id: `${Date.now()}-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`, name, gramsPerUnit };
+    setItems(previous => previous.map(item => item.id === id ? { ...item, gramsPerUnit } : item));
+    setEditingId(null);
+    setMessage('Peso unitario actualizado.');
+  };
+
+  const addItem = () => {
+    const name = newName.trim();
+    const gramsPerUnit = parseNumber(newWeight);
+    if (!name || !Number.isFinite(gramsPerUnit) || gramsPerUnit <= 0) {
+      setMessage('Completá el nombre y el peso unitario con valores válidos.');
+      return;
+    }
+    const item: WeightItem = {
+      id: `${Date.now()}-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+      name,
+      gramsPerUnit,
+    };
     setItems(previous => [...previous, item].sort((a, b) => a.name.localeCompare(b.name, 'es')));
-    setSelectedId(item.id);
     setNewName('');
     setNewWeight('');
     setMessage('Ítem agregado.');
@@ -80,6 +93,10 @@ const WeightCalculator: React.FC = () => {
 
   const deleteItem = (id: string) => {
     setItems(previous => previous.filter(item => item.id !== id));
+    setTotalWeights(previous => {
+      const { [id]: _, ...rest } = previous;
+      return rest;
+    });
     setMessage('Ítem eliminado.');
   };
 
@@ -88,9 +105,9 @@ const WeightCalculator: React.FC = () => {
     const rows = text.split(/\r?\n/).filter(row => row.trim());
     if (!rows.length) { setMessage('El archivo está vacío.'); return; }
     const separator = (rows[0].match(/;/g)?.length || 0) >= (rows[0].match(/,/g)?.length || 0) ? ';' : ',';
-    const firstRow = parseCsvLine(rows[0], separator).map(value => value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim());
-    const nameColumn = firstRow.findIndex(value => ['item', 'producto', 'nombre', 'articulo', 'articulo'].includes(value));
-    const weightColumn = firstRow.findIndex(value => ['gramos por unidad', 'peso por unidad', 'peso_unitario_g', 'gramos', 'peso', 'gramos/unidad'].includes(value));
+    const header = parseCsvLine(rows[0], separator).map(value => value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim());
+    const nameColumn = header.findIndex(value => ['item', 'producto', 'nombre', 'articulo'].includes(value));
+    const weightColumn = header.findIndex(value => ['gramos por unidad', 'peso por unidad', 'peso_unitario_g', 'gramos', 'peso', 'gramos/unidad'].includes(value));
     const hasHeader = nameColumn >= 0 && weightColumn >= 0;
     const imported: WeightItem[] = [];
     rows.slice(hasHeader ? 1 : 0).forEach((row, index) => {
@@ -110,43 +127,84 @@ const WeightCalculator: React.FC = () => {
       imported.forEach(item => byName.set(item.name.trim().toLowerCase(), item));
       return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name, 'es'));
     });
-    setSelectedId(imported[0].id);
-    setMessage(`${imported.length} ítem(s) importado(s). Si ya existían, se actualizaron.`);
+    setMessage(`${imported.length} ítem(s) importado(s). Los existentes se actualizaron.`);
   };
 
-  const resultText = useMemo(() => {
-    if (!selectedItem || !grams || grams <= 0) return 'Ingresá el peso total para calcular.';
-    return `${units.toFixed(2).replace('.', ',')} unidades equivalentes`;
-  }, [grams, selectedItem, units]);
-
-  const inputClasses = 'mt-1 block w-full rounded-md border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white shadow-sm focus:border-violet-500 focus:ring-violet-500 p-2';
+  const inputClasses = 'mt-1 block w-full rounded-md border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white shadow-sm focus:border-violet-500 focus:ring-violet-500 p-3';
 
   return (
-    <div className="max-w-4xl mx-auto pb-6 sm:pb-10">
-      <button onClick={() => navigate('/')} className="w-full sm:w-auto mb-5 sm:mb-6 bg-slate-500 hover:bg-slate-600 text-white font-bold py-3 sm:py-2 px-4 rounded-lg shadow touch-manipulation">&larr; Volver al Menú Principal</button>
-      <h1 className="text-2xl sm:text-3xl font-bold text-center text-violet-700 dark:text-violet-400 leading-tight">Calculadora por Peso</h1>
-      <p className="text-center text-slate-600 dark:text-slate-300 mt-2 mb-6">Ingresá el peso total y obtené la cantidad equivalente de unidades.</p>
+    <main className="max-w-4xl mx-auto pb-8 sm:pb-12">
+      <header className="text-center pt-4 sm:pt-8 mb-6">
+        <h1 className="text-2xl sm:text-3xl font-bold text-violet-700 dark:text-violet-400 leading-tight">Calculadora por Peso</h1>
+        <p className="text-slate-600 dark:text-slate-300 mt-2">Cargá el peso total de cada producto para saber cuántas unidades tenés.</p>
+      </header>
 
-      <section className="p-3.5 sm:p-6 bg-white dark:bg-slate-800 rounded-lg shadow-md">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-          <div><label className="block text-sm font-medium">Ítem</label><select value={selectedId} onChange={event => setSelectedId(event.target.value)} className={inputClasses}>{items.map(item => <option key={item.id} value={item.id}>{item.name} — {item.gramsPerUnit} g/u</option>)}</select></div>
-          <div><label className="block text-sm font-medium">Peso total (gramos)</label><input type="number" inputMode="decimal" min="0" step="0.01" value={totalWeight} onChange={event => setTotalWeight(event.target.value)} className={inputClasses} placeholder="Ej.: 250" autoFocus /></div>
-        </div>
-        <div className="mt-5 sm:mt-6 text-center rounded-lg bg-violet-50 dark:bg-violet-950/40 p-4 sm:p-5">
-          <p className="text-sm text-violet-700 dark:text-violet-300">{selectedItem ? `Cada ${selectedItem.name} pesa ${selectedItem.gramsPerUnit} g.` : 'Cargá un ítem para empezar.'}</p>
-          <p className="text-2xl sm:text-3xl font-bold text-violet-800 dark:text-violet-200 mt-2 break-words">{resultText}</p>
-          {selectedItem && grams > 0 && <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Unidades completas: {completeUnits} · Sobrante: {remainder.toFixed(2).replace('.', ',')} g</p>}
-        </div>
+      <section className="space-y-3">
+        {items.map(item => {
+          const grams = parseNumber(totalWeights[item.id] || '0');
+          const hasWeight = Number.isFinite(grams) && grams > 0;
+          const units = hasWeight ? grams / item.gramsPerUnit : 0;
+          const completeUnits = Math.floor(units);
+          const remainder = hasWeight ? grams - completeUnits * item.gramsPerUnit : 0;
+          const isEditing = editingId === item.id;
+          return (
+            <article key={item.id} className="bg-white dark:bg-slate-800 rounded-xl shadow-md p-4 sm:p-5">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900 dark:text-white">{item.name}</h2>
+                  <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">Peso unitario: <strong>{item.gramsPerUnit} g</strong></p>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => startEditing(item)} className="flex-1 sm:flex-none bg-violet-600 hover:bg-violet-700 text-white font-semibold py-2 px-3 rounded-lg touch-manipulation">
+                    {item.gramsPerUnit > 0 ? 'Modificar peso unitario' : 'Definir peso unitario'}
+                  </button>
+                  <button onClick={() => deleteItem(item.id)} className="text-red-600 hover:text-red-800 dark:text-red-400 font-medium py-2 px-2">Eliminar</button>
+                </div>
+              </div>
+
+              {isEditing && (
+                <div className="mt-4 p-3 bg-violet-50 dark:bg-violet-950/40 rounded-lg">
+                  <label className="block text-sm font-medium">Gramos por unidad</label>
+                  <div className="flex flex-col sm:flex-row gap-2 mt-1">
+                    <input type="number" inputMode="decimal" min="0" step="0.01" value={unitWeightDraft} onChange={event => setUnitWeightDraft(event.target.value)} className="block w-full rounded-md border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white p-3" autoFocus />
+                    <button onClick={() => saveUnitWeight(item.id)} className="bg-violet-600 hover:bg-violet-700 text-white font-bold py-3 px-4 rounded-lg">Guardar</button>
+                    <button onClick={() => setEditingId(null)} className="text-slate-600 dark:text-slate-300 font-medium py-3 px-3">Cancelar</button>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4 items-end">
+                <div>
+                  <label className="block text-sm font-medium">Peso total medido (gramos)</label>
+                  <input type="number" inputMode="decimal" min="0" step="0.01" value={totalWeights[item.id] || ''} onChange={event => setTotalWeights(previous => ({ ...previous, [item.id]: event.target.value }))} className={inputClasses} placeholder="Ej.: 250" />
+                </div>
+                <div className="rounded-lg bg-violet-50 dark:bg-violet-950/40 p-3 sm:p-4 min-h-[92px] flex flex-col justify-center">
+                  {hasWeight ? <>
+                    <p className="text-2xl font-bold text-violet-800 dark:text-violet-200">{units.toFixed(2).replace('.', ',')} unidades</p>
+                    <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">Completas: {completeUnits} · Sobrante: {remainder.toFixed(2).replace('.', ',')} g</p>
+                  </> : <p className="text-sm text-slate-600 dark:text-slate-300">Ingresá el peso total para calcular.</p>}
+                </div>
+              </div>
+            </article>
+          );
+        })}
       </section>
 
-      <section className="mt-5 sm:mt-6 p-3.5 sm:p-6 bg-white dark:bg-slate-800 rounded-lg shadow-md">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4"><h2 className="text-xl font-semibold">Administrar ítems</h2><input ref={inputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={event => { const file = event.target.files?.[0]; if (file) importCsv(file); event.currentTarget.value = ''; }} /><button onClick={() => inputRef.current?.click()} className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 sm:py-2 px-4 rounded-lg shadow flex items-center justify-center touch-manipulation"><UploadIcon />Importar lista CSV</button></div>
-        <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">Desde Excel: guardá la hoja como <strong>CSV UTF-8</strong> con las columnas <strong>Producto</strong> y <strong>Gramos por unidad</strong>. La importación agrega los nuevos ítems y actualiza los que tengan el mismo nombre.</p>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3"><input value={newName} onChange={event => setNewName(event.target.value)} className={inputClasses} placeholder="Nombre del ítem" /><input type="number" inputMode="decimal" min="0" step="0.01" value={newWeight} onChange={event => setNewWeight(event.target.value)} className={inputClasses} placeholder="Gramos por unidad" /><button onClick={addItem} className="mt-1 bg-violet-600 hover:bg-violet-700 text-white font-bold py-3 sm:py-2 px-4 rounded-lg shadow touch-manipulation">Agregar ítem</button></div>
+      <section className="mt-6 p-4 sm:p-6 bg-white dark:bg-slate-800 rounded-xl shadow-md">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+          <h2 className="text-xl font-semibold">Agregar o importar ítems</h2>
+          <input ref={inputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={event => { const file = event.target.files?.[0]; if (file) importCsv(file); event.currentTarget.value = ''; }} />
+          <button onClick={() => inputRef.current?.click()} className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-4 rounded-lg shadow flex items-center justify-center touch-manipulation"><UploadIcon />Importar lista CSV</button>
+        </div>
+        <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">Desde Excel guardá la hoja como <strong>CSV UTF-8</strong>, con las columnas <strong>Producto</strong> y <strong>Gramos por unidad</strong>.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <input value={newName} onChange={event => setNewName(event.target.value)} className={inputClasses} placeholder="Nombre del ítem" />
+          <input type="number" inputMode="decimal" min="0" step="0.01" value={newWeight} onChange={event => setNewWeight(event.target.value)} className={inputClasses} placeholder="Gramos por unidad" />
+          <button onClick={addItem} className="mt-1 bg-violet-600 hover:bg-violet-700 text-white font-bold py-3 px-4 rounded-lg shadow touch-manipulation">Agregar ítem</button>
+        </div>
         {message && <p className="mt-3 text-sm text-violet-700 dark:text-violet-300">{message}</p>}
-        <div className="mt-5 overflow-x-auto"><table className="min-w-full text-sm"><thead className="bg-slate-100 dark:bg-slate-700"><tr><th className="p-2 text-left">Ítem</th><th className="p-2 text-left">Gramos por unidad</th><th className="p-2"></th></tr></thead><tbody>{items.map(item => <tr key={item.id} className="border-b border-slate-200 dark:border-slate-700"><td className="p-2">{item.name}</td><td className="p-2">{item.gramsPerUnit} g</td><td className="p-2 text-right"><button onClick={() => deleteItem(item.id)} className="text-red-600 hover:text-red-800 dark:text-red-400 text-sm font-medium">Eliminar</button></td></tr>)}</tbody></table></div>
       </section>
-    </div>
+    </main>
   );
 };
 
