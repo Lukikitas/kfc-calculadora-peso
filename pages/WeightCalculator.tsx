@@ -8,18 +8,92 @@ interface WeightItem {
 }
 
 const STORAGE_KEY = 'kfc_weight_calculator_items';
-const defaultItems: WeightItem[] = [
-  { id: 'barbacoa-individual', name: 'Barbacoa individual', gramsPerUnit: 25 },
+const defaultItemNames = [
+  'Barbacoa individual',
+  'BOLSA DE LLEVAR GRANDE KFC2',
+  'BOLSA LLEVAR GRANDE MUNDIAL KFC',
+  'BOLSA LLEVAR MEDIANA KFC CAJA X 600',
+  'CUCHARITA X 1000 UND',
+  'CUCHILLO X 1000 UND',
+  'KETCHUP INDIVIDUAL',
+  'MAYONESA INDIVIDUAL',
+  'MOSTAZA INDIVIDUAL',
+  'PORTAVASOS KFC X 200 UND',
+  'SERVILLETAS 30X30',
+  'TAPA VASO GASEOSA 16OZ',
+  'TAPA VASO GASEOSA 12OZ',
+  'TENEDOR',
+  'TENEDOR X 1000 UND',
+  'VASO GASEOSA 12OZ MUNDIAL KFC',
+  'VASO GASEOSA 16OZ MUNDIAL KFC',
+  'VASO GASEOSA 21OZ MUNDIAL KFC',
+  'BANDEJA CANOA KFC',
+  'BOLSA SIN MANIJA GRANDE KFC X 250 UND',
+  'BOWL 4.1OZ X 2000 UND',
+  'BUCKET 50OZ X 420 UND',
+  'BUCKET 85OZ X 330 UND',
+  'BUCKET MUNDIAL 85OZ X 330 UND',
+  'BUCKETS 130OZ MUNDIAL',
+  'CAJA BIG BOX KFC',
+  'CAJA SNACK CON TAPA KFC X 800 UND',
+  'CAJA SNACK KFC X 400 UND',
+  'ESTUCHE PAPAS GRANDES KFC',
+  'ESTUCHE PAPAS MEDIANAS KFC',
+  'ESTUCHE POPCORN GRANDE',
+  'ESTUCHE POPCORN MEDIANO',
+  'ETIQUETA VENCIMIENTO X 22500 UND',
+  'LAMINA ANTIGRASA SANDWICH KFC X1500',
+  'MANTELITO MUNDIAL KFC X 2000 UND',
+  'PAPEL ANTIGRASA BLANCO',
+  'PAPEL ANTIGRASA SANDWICH KFC 2',
+  'POTE 4 OZ KFC X 1500 UND',
+  'POTE 4 OZ PROMO X 1500 UND',
+  'SOBRE KFC X 1000 UND',
+  'TAPA BOWL 4.1OZ X 2000 UND',
+  'TAPA BUCKET KFC X 2150 UND',
+  'TAPA CAJA BIG BOX',
+  'TAPA CAJA SNACK KFC X 250 UND',
+  'TAPA POTE 4 OZ X 1500 UND',
+  'TAPA SALSA BUCKET MUNDIAL KFC X 400',
+  'VASO 14OZ KFC',
+  'VASO CAFE 8 OZ KFC',
+  'VASO GASEOSA 12OZ KFC A',
+  'VASO GASEOSA 16OZ KFC A',
+  'VASO GASEOSA 21OZ KFC',
+  'VASO CAFE 12 OZ KFC X 1000',
+  'ETC TEMPERO',
+  'SEASONING OR',
+  'SERVILLETAS 30X30 X 5000 UND',
+  'ALIOLI A GRANEL X 6 KG',
+  'BARBACOA INDIVIDUAL KFC X 144 UND',
+  'MAYONESA A GRANEL',
+  'MOSTAZA CON MIEL INDIVIDUAL KFC X 144U',
+  'SALSA ALIOLI KFC X 144 UND',
+  'SALSA BARBACOA A GRANEL',
+  'SALSA BARBACOA INDIVIDUAL',
+  'SALSA PICANTE KFC X 144 UND',
+  'SALSA SECRETA GRANEL KFC X 5.25 KG',
+  'SALSA TERIYAKI KFC X 144 UND',
 ];
+
+const defaultItems: WeightItem[] = defaultItemNames.map((name, index) => ({
+  id: `default-${index}`,
+  name,
+  gramsPerUnit: name === 'Barbacoa individual' ? 25 : 0,
+}));
+
+const normalizeName = (name: string) => name.trim().toLowerCase();
 
 const getItems = (): WeightItem[] => {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (!saved) return defaultItems;
     const parsed = JSON.parse(saved) as WeightItem[];
-    return Array.isArray(parsed)
-      ? parsed.filter(item => item.name && Number.isFinite(item.gramsPerUnit) && item.gramsPerUnit > 0)
-      : defaultItems;
+    if (!Array.isArray(parsed)) return defaultItems;
+    const validSaved = parsed.filter(item => item.name && Number.isFinite(item.gramsPerUnit) && item.gramsPerUnit >= 0);
+    const byName = new Map(defaultItems.map(item => [normalizeName(item.name), item]));
+    validSaved.forEach(item => byName.set(normalizeName(item.name), item));
+    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name, 'es'));
   } catch {
     return defaultItems;
   }
@@ -75,9 +149,9 @@ const WeightCalculator: React.FC = () => {
 
   const addItem = () => {
     const name = newName.trim();
-    const gramsPerUnit = parseNumber(newWeight);
-    if (!name || !Number.isFinite(gramsPerUnit) || gramsPerUnit <= 0) {
-      setMessage('Completá el nombre y el peso unitario con valores válidos.');
+    const gramsPerUnit = newWeight.trim() ? parseNumber(newWeight) : 0;
+    if (!name || !Number.isFinite(gramsPerUnit) || gramsPerUnit < 0) {
+      setMessage('Completá el nombre y, si indicás un peso unitario, usá un valor válido.');
       return;
     }
     const item: WeightItem = {
@@ -108,18 +182,19 @@ const WeightCalculator: React.FC = () => {
     const header = parseCsvLine(rows[0], separator).map(value => value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim());
     const nameColumn = header.findIndex(value => ['item', 'producto', 'nombre', 'articulo'].includes(value));
     const weightColumn = header.findIndex(value => ['gramos por unidad', 'peso por unidad', 'peso_unitario_g', 'gramos', 'peso', 'gramos/unidad'].includes(value));
-    const hasHeader = nameColumn >= 0 && weightColumn >= 0;
+    const hasHeader = nameColumn >= 0;
     const imported: WeightItem[] = [];
     rows.slice(hasHeader ? 1 : 0).forEach((row, index) => {
       const columns = parseCsvLine(row, separator);
       const name = columns[hasHeader ? nameColumn : 0]?.trim();
-      const gramsPerUnit = parseNumber(columns[hasHeader ? weightColumn : 1] || '');
-      if (name && Number.isFinite(gramsPerUnit) && gramsPerUnit > 0) {
+      const rawWeight = weightColumn >= 0 ? columns[weightColumn] : columns[hasHeader ? -1 : 1];
+      const gramsPerUnit = rawWeight?.trim() ? parseNumber(rawWeight) : 0;
+      if (name && Number.isFinite(gramsPerUnit) && gramsPerUnit >= 0) {
         imported.push({ id: `import-${Date.now()}-${index}`, name, gramsPerUnit });
       }
     });
     if (!imported.length) {
-      setMessage('No encontré ítems válidos. Usá las columnas “Producto” y “Gramos por unidad”.');
+      setMessage('No encontré ítems válidos. Usá una columna “Producto”; “Gramos por unidad” es opcional.');
       return;
     }
     setItems(previous => {
@@ -143,7 +218,8 @@ const WeightCalculator: React.FC = () => {
         {items.map(item => {
           const grams = parseNumber(totalWeights[item.id] || '0');
           const hasWeight = Number.isFinite(grams) && grams > 0;
-          const units = hasWeight ? grams / item.gramsPerUnit : 0;
+          const canCalculate = hasWeight && item.gramsPerUnit > 0;
+          const units = canCalculate ? grams / item.gramsPerUnit : 0;
           const completeUnits = Math.floor(units);
           const remainder = hasWeight ? grams - completeUnits * item.gramsPerUnit : 0;
           const isEditing = editingId === item.id;
@@ -152,7 +228,7 @@ const WeightCalculator: React.FC = () => {
               <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                 <div>
                   <h2 className="text-lg font-bold text-slate-900 dark:text-white">{item.name}</h2>
-                  <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">Peso unitario: <strong>{item.gramsPerUnit} g</strong></p>
+                  <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">Peso unitario: <strong>{item.gramsPerUnit > 0 ? `${item.gramsPerUnit} g` : 'sin definir'}</strong></p>
                 </div>
                 <div className="flex gap-2">
                   <button onClick={() => startEditing(item)} className="flex-1 sm:flex-none bg-violet-600 hover:bg-violet-700 text-white font-semibold py-2 px-3 rounded-lg touch-manipulation">
@@ -179,10 +255,10 @@ const WeightCalculator: React.FC = () => {
                   <input type="number" inputMode="decimal" min="0" step="0.01" value={totalWeights[item.id] || ''} onChange={event => setTotalWeights(previous => ({ ...previous, [item.id]: event.target.value }))} className={inputClasses} placeholder="Ej.: 250" />
                 </div>
                 <div className="rounded-lg bg-violet-50 dark:bg-violet-950/40 p-3 sm:p-4 min-h-[92px] flex flex-col justify-center">
-                  {hasWeight ? <>
+                  {canCalculate ? <>
                     <p className="text-2xl font-bold text-violet-800 dark:text-violet-200">{units.toFixed(2).replace('.', ',')} unidades</p>
                     <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">Completas: {completeUnits} · Sobrante: {remainder.toFixed(2).replace('.', ',')} g</p>
-                  </> : <p className="text-sm text-slate-600 dark:text-slate-300">Ingresá el peso total para calcular.</p>}
+                  </> : <p className="text-sm text-slate-600 dark:text-slate-300">{hasWeight ? 'Definí el peso unitario para calcular.' : 'Ingresá el peso total para calcular.'}</p>}
                 </div>
               </div>
             </article>
@@ -196,10 +272,10 @@ const WeightCalculator: React.FC = () => {
           <input ref={inputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={event => { const file = event.target.files?.[0]; if (file) importCsv(file); event.currentTarget.value = ''; }} />
           <button onClick={() => inputRef.current?.click()} className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-4 rounded-lg shadow flex items-center justify-center touch-manipulation"><UploadIcon />Importar lista CSV</button>
         </div>
-        <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">Desde Excel guardá la hoja como <strong>CSV UTF-8</strong>, con las columnas <strong>Producto</strong> y <strong>Gramos por unidad</strong>.</p>
+        <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">Desde Excel guardá la hoja como <strong>CSV UTF-8</strong>, con la columna <strong>Producto</strong>. <strong>Gramos por unidad</strong> es opcional y se puede completar después.</p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <input value={newName} onChange={event => setNewName(event.target.value)} className={inputClasses} placeholder="Nombre del ítem" />
-          <input type="number" inputMode="decimal" min="0" step="0.01" value={newWeight} onChange={event => setNewWeight(event.target.value)} className={inputClasses} placeholder="Gramos por unidad" />
+          <input type="number" inputMode="decimal" min="0" step="0.01" value={newWeight} onChange={event => setNewWeight(event.target.value)} className={inputClasses} placeholder="Gramos por unidad (opcional)" />
           <button onClick={addItem} className="mt-1 bg-violet-600 hover:bg-violet-700 text-white font-bold py-3 px-4 rounded-lg shadow touch-manipulation">Agregar ítem</button>
         </div>
         {message && <p className="mt-3 text-sm text-violet-700 dark:text-violet-300">{message}</p>}
